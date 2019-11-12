@@ -1,0 +1,18 @@
+{
+    "meta" : {
+        "label": "Dropbox connection",
+        "description": "",
+        "icon": "icon-dropbox"
+    },
+    "defaultDefinableInline": true,
+    "defaultDefinableAtProjectLevel": true,
+    "pluginParams": [
+        {
+            "name": "access_token",
+            "label": "Access token",
+            "type": "PASSWORD",
+            "description": "Generated on Dropbox for use in DSS",
+            "mandatory": true
+        }
+    ]
+}

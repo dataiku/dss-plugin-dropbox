@@ -1,0 +1,15 @@
+{
+    "meta": {
+        "label": "Dropbox",
+        "description": "Read and write data from/to your Dropbox account",
+        "icon": "icon-dropbox"
+    },
+    "params": [
+        {
+            "name": "dropbox_connection",
+            "label": "Dropbox connection",
+            "type": "PRESET",
+            "parameterSetId": "dropbox-set-id"
+        }
+    ]
+}
