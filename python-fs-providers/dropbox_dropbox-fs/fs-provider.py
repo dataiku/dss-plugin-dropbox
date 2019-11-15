@@ -65,18 +65,33 @@ class DropboxFSProvider(FSProvider):
         try:
             item = self.dbx.files_get_metadata(self.get_normalized_path(full_path))
         except Exception as error:
-            logger.info("Dropbox API error :{}".format(error))
-            return None
+            if self.is_not_found(error):
+                return None
+            else:
+                raise
 
         if item is None:
             return None
 
         if full_path == "" or self.is_folder(item):
-            return {'path': self.get_normalized_path(path), 'size':0, 'lastModified': 0, 'isDirectory':True}
+            return {
+                'path': self.get_normalized_path(path), 'size':0,
+                'lastModified': self.get_last_modified(item),
+                'isDirectory':True
+                }
         elif self.is_file(item):
-            return {'path': self.get_normalized_path(path), 'size': item.size, 'isDirectory': False}
+            return {
+                'path': self.get_normalized_path(path),
+                'size': item.size, 'lastModified': self.get_last_modified(item),
+                'isDirectory': False
+                }
         else:
             return None
+
+    def get_last_modified(self, item):
+        if isinstance(item, dropbox.files.FileMetadata):
+            return int(item.client_modified.strftime('%s')) * 1000
+        return None
 
     def set_last_modified(self, path, last_modified):
         """
@@ -88,7 +103,7 @@ class DropboxFSProvider(FSProvider):
         """
         List the file or directory at the given path, and its children (if directory)
         """
-        full_path = self.get_full_path(path)
+        full_path = self.get_full_path(self.get_normalized_path(path))
         item = None
         if full_path == '/':
             full_path = ""
@@ -97,22 +112,52 @@ class DropboxFSProvider(FSProvider):
             try:
                 item = self.dbx.files_get_metadata(full_path)
             except dropbox.exceptions.ApiError as error:
-                logger.info("ALX:Dropbox API error {}".format(error))
-        
+                if self.is_not_found(error):
+                    return {'fullPath' : None, 'exists' : False}
+                else:
+                    raise
+
         if full_path == "" or self.is_folder(item):
             children = []
             for sub in self.dbx.files_list_folder(full_path).entries:
                 sub_path = self.get_normalized_path(os.path.join(path, sub.name))
                 if self.is_folder(sub):
-                    children.append({'fullPath': sub_path, 'exists':True, 'directory':True, 'size':0})
+                    children.append({
+                        'fullPath': sub_path,
+                        'exists':True,
+                        'directory':True,
+                        'size':0,
+                        'lastModified': self.get_last_modified(sub)
+                        })
                 else:
-                    children.append({'fullPath': sub_path, 'exists':True, 'directory':False, 'size':sub.size})
-            return {'fullPath' : self.get_normalized_path(path), 'exists' : True, 'directory' : True, 'children' : children}
+                    children.append({
+                        'fullPath': sub_path,
+                        'exists':True,
+                        'directory':False,
+                        'size':sub.size,
+                        'lastModified': self.get_last_modified(sub)
+                        })
+            return {
+                'fullPath' : self.get_normalized_path(path),
+                'exists' : True,
+                'directory' : True,
+                'children' : children,
+                'lastModified': self.get_last_modified(item)
+                }
         elif self.is_file(item):
             item = self.dbx.files_get_metadata(full_path)
-            return {'fullPath' : self.get_normalized_path(path), 'exists' : True, 'directory' : False, 'size' : item.size}
+            return {
+                'fullPath' : self.get_normalized_path(path),
+                'exists' : True,
+                'directory' : False,
+                'size' : item.size,
+                'lastModified': self.get_last_modified(item)
+                }
         if item is None:
             return {'fullPath' : None, 'exists' : False}
+
+    def is_not_found(self, error):
+        return error.error.is_path() and error.error.get_path()._tag == 'not_found'
 
     def is_file(self, item):
         return isinstance(item, dropbox.files.FileMetadata)
@@ -132,17 +177,29 @@ class DropboxFSProvider(FSProvider):
         try:
             item = self.dbx.files_get_metadata(self.get_normalized_path(full_path))
         except dropbox.exceptions.ApiError as error:
-            logger.info("Dropbox API error {}".format(error))
+            if self.is_not_found(error):
+                return None
+            else:
+                raise
+
         if item == None:
             return None
         paths = []
         if self.is_file(item):
-            paths = [{'path':self.get_lnt_path(path).split("/")[-1], 'size': item.size}]
+            paths = [{
+                'path':self.get_lnt_path(path).split("/")[-1],
+                'size': item.size,
+                'lastModified': self.get_last_modified(item)
+                }]
         if self.is_folder(item):
             for sub in self.dbx.files_list_folder(full_path, recursive=True).entries:
                 if self.is_file(sub):
                     sub_size = sub.size
-                    paths.append({'path':self.get_normalized_path(path + self.substract_path_base(full_path, sub.path_display)), 'size':sub_size})
+                    paths.append({
+                        'path':self.get_normalized_path(path + self.substract_path_base(full_path, sub.path_display)),
+                        'size':sub_size,
+                        'lastModified': self.get_last_modified(sub)
+                        })
         return paths
 
     def substract_path_base(self, base, path):
@@ -157,12 +214,11 @@ class DropboxFSProvider(FSProvider):
             self.dbx.files_delete(self.get_normalized_path(full_path))
             return 1
         except dropbox.exceptions.ApiError as error:
-            if error.error.is_path() and error.error.get_path()._tag == 'not_found':
+            if self.is_not_found(error):
                 return 0
             else:
-                raise Exception('Error while deleting "{0}" : {1}'.format(path, error))
+                raise
 
-            
     def move(self, from_path, to_path):
         """
         Move a file or folder to a new path inside the provider's root. Return false if the moved file didn't exist
@@ -172,7 +228,7 @@ class DropboxFSProvider(FSProvider):
         try:
             self.dbx.files_move(from_path=full_from_path, to_path=full_to_path)
         except dropbox.exceptions.ApiError as error:
-            if error.error.is_path() and error.error.get_path()._tag == 'not_found':
+            if self.is_not_found(error):
                 return False
             else:
                 raise
@@ -192,34 +248,32 @@ class DropboxFSProvider(FSProvider):
         Write the stream to the object denoted by path into the stream
         """
         full_path = self.get_full_path(path)
-        try:
-            sio = BytesIO()
-            shutil.copyfileobj(stream, sio)
 
-            file_size = self.file_size(sio)
-            sio.seek(0)
+        sio = BytesIO()
+        shutil.copyfileobj(stream, sio)
 
-            if file_size <= self.CHUNK_SIZE:
-                self.dbx.files_upload(sio.read(), full_path, mute=True)
-            else:
-                upload_session_start_result = self.dbx.files_upload_session_start(sio.read(self.CHUNK_SIZE))
-                cursor = dropbox.files.UploadSessionCursor(session_id=upload_session_start_result.session_id,
-                                                        offset=sio.tell())
-                commit = dropbox.files.CommitInfo(path=full_path)
+        file_size = self.file_size(sio)
+        sio.seek(0)
 
-                while sio.tell() < file_size:
-                    if ((file_size - sio.tell()) <= self.CHUNK_SIZE):
-                        self.dbx.files_upload_session_finish(sio.read(self.CHUNK_SIZE),
-                                                        cursor,
-                                                        commit)
-                    else:
-                        self.dbx.files_upload_session_append(sio.read(self.CHUNK_SIZE),
-                                                        cursor.session_id,
-                                                        cursor.offset)
-                        cursor.offset = sio.tell()
+        if file_size <= self.CHUNK_SIZE:
+            self.dbx.files_upload(sio.read(), full_path, mute=True)
+        else:
+            upload_session_start_result = self.dbx.files_upload_session_start(sio.read(self.CHUNK_SIZE))
+            cursor = dropbox.files.UploadSessionCursor(session_id=upload_session_start_result.session_id,
+                                                    offset=sio.tell())
+            commit = dropbox.files.CommitInfo(path=full_path)
 
-        except dropbox.exceptions.ApiError as error:
-            logger.error("Dropbox API error :{0}".format(error))
+            while sio.tell() < file_size:
+                if ((file_size - sio.tell()) <= self.CHUNK_SIZE):
+                    self.dbx.files_upload_session_finish(sio.read(self.CHUNK_SIZE),
+                                                    cursor,
+                                                    commit)
+                else:
+                    self.dbx.files_upload_session_append(sio.read(self.CHUNK_SIZE),
+                                                    cursor.session_id,
+                                                    cursor.offset)
+                    cursor.offset = sio.tell()
+
 
     def file_size(self, file_handle):
         file_handle.seek(0, 2)
