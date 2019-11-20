@@ -11,6 +11,7 @@
             "Cloud"
         ],
         "url": "https://www.dataiku.com/dss/plugins/info/dropbox.html",
-        "licenseInfo": "Apache Software License"
+        "licenseInfo": "Apache Software License",
+        "supportLevel": "NOT_SUPPORTED"
     }
 }
